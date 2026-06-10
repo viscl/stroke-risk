@@ -272,14 +272,20 @@ def train_stacking_model(
         platt_rf = _platt_calibrate(rf, X_t, y_t, X_c, y_c, fold_seed)
         lr.fit(X_t, y_t)
 
+        from neural_net import NeuralNetClassifier
+
+        nn_model = NeuralNetClassifier(input_dim=X_t.shape[1], random_state=fold_seed)
+        nn_model.fit(X_t, y_t)
+
         xgb_raw = xgb.predict_proba(X_val)[:, 1].reshape(-1, 1)
         rf_raw = rf.predict_proba(X_val)[:, 1].reshape(-1, 1)
         lr_raw = lr.predict_proba(X_val)[:, 1].reshape(-1, 1)
+        nn_raw = nn_model.predict_proba(X_val)[:, 1].reshape(-1, 1)
 
         xgb_cal = platt_xgb.predict_proba(xgb_raw)[:, 1]
         rf_cal = platt_rf.predict_proba(rf_raw)[:, 1]
 
-        meta_X_parts.append(np.column_stack([xgb_cal, rf_cal, lr_raw.flatten()]))
+        meta_X_parts.append(np.column_stack([xgb_cal, rf_cal, lr_raw.flatten(), nn_raw.flatten()]))
         meta_y_parts.append(y_val)
 
     meta_X = np.vstack(meta_X_parts)
@@ -334,6 +340,7 @@ def save_artifacts(
     preprocessor,
     threshold: dict | None = None,
     stacking=None,
+    nn_model=None,
     dir_path: str = DEFAULT_ARTIFACTS_DIR,
 ) -> None:
     os.makedirs(dir_path, exist_ok=True)
@@ -350,6 +357,9 @@ def save_artifacts(
 
     if stacking is not None:
         joblib.dump(stacking, os.path.join(dir_path, "stacking_model.joblib"))
+
+    if nn_model is not None:
+        nn_model.save(os.path.join(dir_path, "nn_model.pt"))
 
 
 def load_artifacts(dir_path: str = DEFAULT_ARTIFACTS_DIR):

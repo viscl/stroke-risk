@@ -10,11 +10,13 @@ from .model import (
     tune_threshold,
     tune_xgb,
 )
+from .neural_net import NeuralNetClassifier
 from .predict import predict_risk
 
 __all__ = [
     "FEATURE_COLUMNS",
     "LABEL_COLUMN",
+    "NeuralNetClassifier",
     "calibrate_models",
     "encode_data",
     "get_feature_names",

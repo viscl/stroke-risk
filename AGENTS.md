@@ -5,7 +5,7 @@ Flat single-package ML project: data → train → predict. No tests, no CI, no 
 ## Commands
 
 ```bash
-# Train with Optuna tuning (default; ~3-4 min)
+# Train with Optuna tuning (default; ~5 min)
 python train.py                          # uses healthcare-dataset-stroke-data.csv
 python train.py /path/to/your_data.csv   # custom data: must have all FEATURE_COLUMNS + stroke label
 
@@ -28,10 +28,11 @@ load_data → encode_data → cross_validate_models (baseline CV)
   → split_and_balance (SMOTE train split)
   → train_models (with tuned params)
   → calibrate_models (Platt scaling via CalibratedClassifierCV(cv=5) for XGB+RF)
-  → train_stacking_model (5-fold CV out-of-fold calibrated probs → LR meta-model)
+  → train_nn (NeuralNetClassifier: MLP 128→64, ReLU+Dropout, Adam, early stopping)
+  → train_stacking_model (5-fold CV out-of-fold calibrated probs → LR meta-model, 4 base models)
   → tune_threshold (F1-optimal on test set)
   → classification_report + confusion_matrix
-  → save_artifacts (calibrated xgb, lr, calibrated rf, stacking, preprocessor, threshold.json)
+  → save_artifacts (calibrated xgb, lr, calibrated rf, stacking, nn, preprocessor, threshold.json)
 ```
 
 ## Gotchas
@@ -55,7 +56,8 @@ load_data → encode_data → cross_validate_models (baseline CV)
 
 ## Stacking ensemble
 
-- `train_stacking_model` uses 5-fold CV to generate out-of-fold calibrated predictions from all 3 base models as features for a LogisticRegression meta-model (avoids data leakage).
+- `train_stacking_model` uses 5-fold CV to generate out-of-fold calibrated predictions from all 4 base models as features for a LogisticRegression meta-model (avoids data leakage).
 - Manual Platt scaling per fold (80/20 train/calibration split + sigmoid fitting) avoids the `CalibratedClassifierCV(cv='prefit')` incompatibility.
 - `predict_risk` output includes `stack_probability` field (`None` if `stacking_model.joblib` is missing).
-- Base models at prediction time are the externally-calibrated ones (XGB, RF via `CalibratedClassifierCV(cv=5)`, LR raw).
+- Base models at prediction time are the externally-calibrated ones (XGB, RF via `CalibratedClassifierCV(cv=5)`, LR raw, NN raw).
+- The stacking meta-model's `n_features_in_` attribute is used at prediction time to decide 3 vs 4 input features for backward compatibility.

@@ -7,6 +7,7 @@ import pandas as pd
 import shap
 
 from data import get_feature_names
+from neural_net import NeuralNetClassifier
 
 DEFAULT_ARTIFACTS_DIR = os.path.join(os.path.dirname(__file__), "artifacts")
 
@@ -20,12 +21,13 @@ def _load_artifacts():
 _xgb, _lr, _rf, _preprocessor = None, None, None, None
 _threshold = None
 _stacking = None
+_nn = None
 _explainer = None
 _feature_names = None
 
 
 def _ensure_loaded():
-    global _xgb, _lr, _rf, _preprocessor, _threshold, _stacking, _explainer, _feature_names
+    global _xgb, _lr, _rf, _preprocessor, _threshold, _stacking, _nn, _explainer, _feature_names
     if _xgb is None:
         _xgb, _lr, _rf, _preprocessor, _threshold = _load_artifacts()
         raw_xgb = _xgb.calibrated_classifiers_[0].estimator
@@ -35,6 +37,10 @@ def _ensure_loaded():
         stacking_path = os.path.join(DEFAULT_ARTIFACTS_DIR, "stacking_model.joblib")
         if os.path.exists(stacking_path):
             _stacking = joblib.load(stacking_path)
+
+        nn_path = os.path.join(DEFAULT_ARTIFACTS_DIR, "nn_model.pt")
+        if os.path.exists(nn_path):
+            _nn = NeuralNetClassifier.load(nn_path)
 
 
 def _risk_level(prob: float) -> str:
@@ -62,9 +68,28 @@ def predict_risk(
     lr_probs = _lr.predict_proba(X_encoded)[:, 1]
     rf_probs = _rf.predict_proba(X_encoded)[:, 1]
 
-    if _stacking is not None:
-        meta = np.column_stack([xgb_probs, lr_probs, rf_probs])
-        stack_probs = _stacking.predict_proba(meta)[:, 1]
+    if _nn is not None:
+        nn_probs = _nn.predict_proba(X_encoded)[:, 1]
+    else:
+        nn_probs = None
+
+    if _stacking is not None and nn_probs is not None:
+        n_inputs = getattr(_stacking, "n_features_in_", 3)
+        if n_inputs == 4:
+            meta = np.column_stack([xgb_probs, lr_probs, rf_probs, nn_probs])
+            stack_probs = _stacking.predict_proba(meta)[:, 1]
+        elif n_inputs == 3:
+            meta = np.column_stack([xgb_probs, lr_probs, rf_probs])
+            stack_probs = _stacking.predict_proba(meta)[:, 1]
+        else:
+            stack_probs = None
+    elif _stacking is not None:
+        n_inputs = getattr(_stacking, "n_features_in_", 3)
+        if n_inputs == 3:
+            meta = np.column_stack([xgb_probs, lr_probs, rf_probs])
+            stack_probs = _stacking.predict_proba(meta)[:, 1]
+        else:
+            stack_probs = None
     else:
         stack_probs = None
 
@@ -93,6 +118,7 @@ def predict_risk(
                 "risk_label": int(xgb_prob >= decision),
                 "lr_probability": round(float(lr_probs[i]), 4),
                 "rf_probability": round(float(rf_probs[i]), 4),
+                "nn_probability": round(float(nn_probs[i]), 4) if nn_probs is not None else None,
                 "stack_probability": round(float(stack_probs[i]), 4) if stack_probs is not None else None,
                 "shap_explanation": feature_contributions,
             }

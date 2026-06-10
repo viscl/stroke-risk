@@ -15,6 +15,7 @@ from model import (
     tune_threshold,
     tune_xgb,
 )
+from neural_net import NeuralNetClassifier
 
 
 def main(data_path: str = "healthcare-dataset-stroke-data.csv", random_state: int = 42, tune: bool = True) -> None:
@@ -69,6 +70,11 @@ def main(data_path: str = "healthcare-dataset-stroke-data.csv", random_state: in
     )
     print("  Calibrated.")
 
+    print("\n--- Training neural network ---")
+    nn_model = NeuralNetClassifier(input_dim=X_train.shape[1], random_state=random_state)
+    nn_model.fit(X_train, y_train)
+    print("  Trained.")
+
     print("\n--- Threshold tuning (F1-optimal on test set) ---")
     calib_probs = calib_xgb.predict_proba(X_test)[:, 1]
     best_threshold = tune_threshold(y_test, calib_probs, metric="f1")
@@ -82,6 +88,7 @@ def main(data_path: str = "healthcare-dataset-stroke-data.csv", random_state: in
         ("xgb", calib_xgb, "XGBoost (calibrated)"),
         ("lr", results["lr"], "Logistic Regression"),
         ("rf", calib_rf, "Random Forest (calibrated)"),
+        ("nn", nn_model, "Neural Network"),
     ]:
         y_prob = model.predict_proba(X_test)[:, 1]
         y_pred = (y_prob >= best_threshold).astype(int)
@@ -99,14 +106,15 @@ def main(data_path: str = "healthcare-dataset-stroke-data.csv", random_state: in
         random_state=random_state,
     )
 
-    def _stacking_predict_proba(model, xgb_mod, lr_mod, rf_mod, X):
+    def _stacking_predict_proba(model, xgb_mod, lr_mod, rf_mod, nn_mod, X):
         xgb_p = xgb_mod.predict_proba(X)[:, 1]
         lr_p = lr_mod.predict_proba(X)[:, 1]
         rf_p = rf_mod.predict_proba(X)[:, 1]
-        meta = np.column_stack([xgb_p, lr_p, rf_p])
+        nn_p = nn_mod.predict_proba(X)[:, 1]
+        meta = np.column_stack([xgb_p, lr_p, rf_p, nn_p])
         return model.predict_proba(meta)[:, 1]
 
-    stack_probs = _stacking_predict_proba(stacking_model, calib_xgb, results["lr"], calib_rf, X_test)
+    stack_probs = _stacking_predict_proba(stacking_model, calib_xgb, results["lr"], calib_rf, nn_model, X_test)
     stack_best_thresh = tune_threshold(y_test, stack_probs, metric="f1")
     stack_pred = (stack_probs >= stack_best_thresh).astype(int)
     print(f"  Optimal stacking threshold: {stack_best_thresh:.4f}")
@@ -116,7 +124,7 @@ def main(data_path: str = "healthcare-dataset-stroke-data.csv", random_state: in
     print(f"  Confusion matrix:\n    TN={cm_s[0,0]:5d}  FP={cm_s[0,1]:5d}\n    FN={cm_s[1,0]:5d}  TP={cm_s[1,1]:5d}")
 
     print("\nSaving artifacts...")
-    save_artifacts(calib_xgb, results["lr"], calib_rf, preprocessor, threshold=threshold_dict, stacking=stacking_model)
+    save_artifacts(calib_xgb, results["lr"], calib_rf, preprocessor, threshold=threshold_dict, stacking=stacking_model, nn_model=nn_model)
     print("  Saved to artifacts/")
 
     print("\n--- Sample predictions ---")
