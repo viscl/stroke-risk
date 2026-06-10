@@ -10,6 +10,7 @@ from model import (
     cross_validate_models,
     save_artifacts,
     train_models,
+    train_stacking_model,
     tune_rf,
     tune_threshold,
     tune_xgb,
@@ -90,8 +91,32 @@ def main(data_path: str = "healthcare-dataset-stroke-data.csv", random_state: in
         cm = confusion_matrix(y_test, y_pred)
         print(f"  Confusion matrix:\n    TN={cm[0,0]:5d}  FP={cm[0,1]:5d}\n    FN={cm[1,0]:5d}  TP={cm[1,1]:5d}")
 
+    print("\n--- Stacking ensemble ---")
+    stacking_model = train_stacking_model(
+        X_train, y_train,
+        xgb_params=xgb_params,
+        rf_params=rf_params,
+        random_state=random_state,
+    )
+
+    def _stacking_predict_proba(model, xgb_mod, lr_mod, rf_mod, X):
+        xgb_p = xgb_mod.predict_proba(X)[:, 1]
+        lr_p = lr_mod.predict_proba(X)[:, 1]
+        rf_p = rf_mod.predict_proba(X)[:, 1]
+        meta = np.column_stack([xgb_p, lr_p, rf_p])
+        return model.predict_proba(meta)[:, 1]
+
+    stack_probs = _stacking_predict_proba(stacking_model, calib_xgb, results["lr"], calib_rf, X_test)
+    stack_best_thresh = tune_threshold(y_test, stack_probs, metric="f1")
+    stack_pred = (stack_probs >= stack_best_thresh).astype(int)
+    print(f"  Optimal stacking threshold: {stack_best_thresh:.4f}")
+    print(f"\n  === Stacking (LR meta-model) ===")
+    print(f"  {classification_report(y_test, stack_pred)}")
+    cm_s = confusion_matrix(y_test, stack_pred)
+    print(f"  Confusion matrix:\n    TN={cm_s[0,0]:5d}  FP={cm_s[0,1]:5d}\n    FN={cm_s[1,0]:5d}  TP={cm_s[1,1]:5d}")
+
     print("\nSaving artifacts...")
-    save_artifacts(calib_xgb, results["lr"], calib_rf, preprocessor, threshold=threshold_dict)
+    save_artifacts(calib_xgb, results["lr"], calib_rf, preprocessor, threshold=threshold_dict, stacking=stacking_model)
     print("  Saved to artifacts/")
 
     print("\n--- Sample predictions ---")

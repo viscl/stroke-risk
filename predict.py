@@ -1,6 +1,7 @@
 import os
 from typing import Any
 
+import joblib
 import numpy as np
 import pandas as pd
 import shap
@@ -18,17 +19,22 @@ def _load_artifacts():
 
 _xgb, _lr, _rf, _preprocessor = None, None, None, None
 _threshold = None
+_stacking = None
 _explainer = None
 _feature_names = None
 
 
 def _ensure_loaded():
-    global _xgb, _lr, _rf, _preprocessor, _threshold, _explainer, _feature_names
+    global _xgb, _lr, _rf, _preprocessor, _threshold, _stacking, _explainer, _feature_names
     if _xgb is None:
         _xgb, _lr, _rf, _preprocessor, _threshold = _load_artifacts()
         raw_xgb = _xgb.calibrated_classifiers_[0].estimator
         _explainer = shap.TreeExplainer(raw_xgb)
         _feature_names = get_feature_names(_preprocessor)
+
+        stacking_path = os.path.join(DEFAULT_ARTIFACTS_DIR, "stacking_model.joblib")
+        if os.path.exists(stacking_path):
+            _stacking = joblib.load(stacking_path)
 
 
 def _risk_level(prob: float) -> str:
@@ -56,6 +62,12 @@ def predict_risk(
     lr_probs = _lr.predict_proba(X_encoded)[:, 1]
     rf_probs = _rf.predict_proba(X_encoded)[:, 1]
 
+    if _stacking is not None:
+        meta = np.column_stack([xgb_probs, lr_probs, rf_probs])
+        stack_probs = _stacking.predict_proba(meta)[:, 1]
+    else:
+        stack_probs = None
+
     decision = _threshold.get("decision", 0.5)
 
     results = []
@@ -81,6 +93,7 @@ def predict_risk(
                 "risk_label": int(xgb_prob >= decision),
                 "lr_probability": round(float(lr_probs[i]), 4),
                 "rf_probability": round(float(rf_probs[i]), 4),
+                "stack_probability": round(float(stack_probs[i]), 4) if stack_probs is not None else None,
                 "shap_explanation": feature_contributions,
             }
         )

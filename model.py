@@ -10,7 +10,7 @@ from sklearn.calibration import CalibratedClassifierCV
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score, roc_auc_score
-from sklearn.model_selection import StratifiedKFold, cross_validate
+from sklearn.model_selection import StratifiedKFold, cross_validate, train_test_split
 from xgboost import XGBClassifier
 
 DEFAULT_ARTIFACTS_DIR = os.path.join(os.path.dirname(__file__), "artifacts")
@@ -222,6 +222,75 @@ def calibrate_models(
     return calib_xgb, calib_rf
 
 
+def _platt_calibrate(estimator, X_train, y_train, X_calib, y_calib, random_state):
+    estimator.fit(X_train, y_train)
+    raw = estimator.predict_proba(X_calib)[:, 1].reshape(-1, 1)
+    platt = LogisticRegression(max_iter=1000, random_state=random_state)
+    platt.fit(raw, y_calib)
+    return platt
+
+
+# ---------------------------------------------------------------------------
+# Stacking ensemble
+# ---------------------------------------------------------------------------
+
+def train_stacking_model(
+    X_train: np.ndarray,
+    y_train: np.ndarray,
+    xgb_params: dict | None = None,
+    rf_params: dict | None = None,
+    random_state: int = 42,
+    n_splits: int = 5,
+) -> LogisticRegression:
+    cv = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=random_state)
+
+    meta_X_parts = []
+    meta_y_parts = []
+
+    for fold_idx, (inner_idx, val_idx) in enumerate(cv.split(X_train, y_train)):
+        fold_seed = random_state + fold_idx
+
+        X_inner, X_val = X_train[inner_idx], X_train[val_idx]
+        y_inner, y_val = y_train[inner_idx], y_train[val_idx]
+
+        smote = SMOTE(random_state=fold_seed)
+        X_inner_bal, y_inner_bal = smote.fit_resample(X_inner, y_inner)
+
+        X_t, X_c, y_t, y_c = train_test_split(
+            X_inner_bal, y_inner_bal,
+            test_size=0.2, stratify=y_inner_bal,
+            random_state=fold_seed,
+        )
+
+        xgb, lr, rf = _build_models(
+            random_state=fold_seed,
+            xgb_params=xgb_params,
+            rf_params=rf_params,
+        )
+
+        platt_xgb = _platt_calibrate(xgb, X_t, y_t, X_c, y_c, fold_seed)
+        platt_rf = _platt_calibrate(rf, X_t, y_t, X_c, y_c, fold_seed)
+        lr.fit(X_t, y_t)
+
+        xgb_raw = xgb.predict_proba(X_val)[:, 1].reshape(-1, 1)
+        rf_raw = rf.predict_proba(X_val)[:, 1].reshape(-1, 1)
+        lr_raw = lr.predict_proba(X_val)[:, 1].reshape(-1, 1)
+
+        xgb_cal = platt_xgb.predict_proba(xgb_raw)[:, 1]
+        rf_cal = platt_rf.predict_proba(rf_raw)[:, 1]
+
+        meta_X_parts.append(np.column_stack([xgb_cal, rf_cal, lr_raw.flatten()]))
+        meta_y_parts.append(y_val)
+
+    meta_X = np.vstack(meta_X_parts)
+    meta_y = np.concatenate(meta_y_parts)
+
+    stacking = LogisticRegression(max_iter=2000, class_weight="balanced", random_state=random_state)
+    stacking.fit(meta_X, meta_y)
+
+    return stacking
+
+
 # ---------------------------------------------------------------------------
 # Threshold tuning
 # ---------------------------------------------------------------------------
@@ -264,6 +333,7 @@ def save_artifacts(
     rf,
     preprocessor,
     threshold: dict | None = None,
+    stacking=None,
     dir_path: str = DEFAULT_ARTIFACTS_DIR,
 ) -> None:
     os.makedirs(dir_path, exist_ok=True)
@@ -277,6 +347,9 @@ def save_artifacts(
 
     with open(os.path.join(dir_path, "threshold.json"), "w") as f:
         json.dump(threshold, f)
+
+    if stacking is not None:
+        joblib.dump(stacking, os.path.join(dir_path, "stacking_model.joblib"))
 
 
 def load_artifacts(dir_path: str = DEFAULT_ARTIFACTS_DIR):

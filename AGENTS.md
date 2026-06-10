@@ -28,9 +28,10 @@ load_data → encode_data → cross_validate_models (baseline CV)
   → split_and_balance (SMOTE train split)
   → train_models (with tuned params)
   → calibrate_models (Platt scaling via CalibratedClassifierCV(cv=5) for XGB+RF)
+  → train_stacking_model (5-fold CV out-of-fold calibrated probs → LR meta-model)
   → tune_threshold (F1-optimal on test set)
   → classification_report + confusion_matrix
-  → save_artifacts (calibrated xgb, lr, calibrated rf, preprocessor, threshold.json)
+  → save_artifacts (calibrated xgb, lr, calibrated rf, stacking, preprocessor, threshold.json)
 ```
 
 ## Gotchas
@@ -51,3 +52,10 @@ load_data → encode_data → cross_validate_models (baseline CV)
 - Accepts a single `dict` or `list[dict]`; returns the same shape.
 - Models saved to artifacts are calibrated `CalibratedClassifierCV` wrappers (XGB, RF). SHAP explainer extracts the raw XGBoost from the wrapper via `_xgb.calibrated_classifiers_[0].estimator`.
 - `risk_label` uses the tuned `decision` threshold from `threshold.json`, not hardcoded 0.5.
+
+## Stacking ensemble
+
+- `train_stacking_model` uses 5-fold CV to generate out-of-fold calibrated predictions from all 3 base models as features for a LogisticRegression meta-model (avoids data leakage).
+- Manual Platt scaling per fold (80/20 train/calibration split + sigmoid fitting) avoids the `CalibratedClassifierCV(cv='prefit')` incompatibility.
+- `predict_risk` output includes `stack_probability` field (`None` if `stacking_model.joblib` is missing).
+- Base models at prediction time are the externally-calibrated ones (XGB, RF via `CalibratedClassifierCV(cv=5)`, LR raw).
