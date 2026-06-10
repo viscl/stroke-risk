@@ -1,54 +1,75 @@
+import sys
+
 import pandas as pd
 
-from data import load_data, preprocess_data
-from model import save_artifacts, train_models
+from data import FEATURE_COLUMNS, encode_data, load_data, split_and_balance
+from model import cross_validate_models, save_artifacts, train_models
 
 
-def main(data_path: str | None = None, random_state: int = 42) -> None:
+def main(data_path: str = "healthcare-dataset-stroke-data.csv", random_state: int = 42) -> None:
     print("Loading data...")
-    X, y = load_data(data_path)
+    df = load_data(data_path)
+    print(f"  Samples: {len(df)}  |  Stroke prevalence: {df['stroke'].mean():.2%}")
 
-    print(f"  Samples: {len(y)}  |  Stroke risk prevalence: {y.mean():.2%}")
+    print("\nEncoding features...")
+    X, y, preprocessor, feature_names = encode_data(df)
+    print(f"  Encoded feature count: {len(feature_names)}")
 
-    X_train, X_test, y_train, y_test, scaler = preprocess_data(
-        X, y, random_state=random_state
+    print("\n--- 5-Fold Cross-Validation (SMOTE per fold) ---")
+    cv_results = cross_validate_models(X, y, n_splits=5, random_state=random_state)
+
+    for model_name in ["xgb", "lr", "rf"]:
+        print(f"  {model_name.upper()}:")
+        for metric, (mean, std) in cv_results[model_name].items():
+            print(f"    {metric}: {mean:.4f} ± {std:.4f}")
+
+    print("\nSplitting for final evaluation...")
+    X_train, X_test, y_train, y_test = split_and_balance(
+        X, y, test_size=0.2, random_state=random_state, apply_smote=True
     )
+    print(f"  Train (after SMOTE): {len(y_train)}  |  Test: {len(y_test)}")
+    print(f"  Train stroke rate: {y_train.mean():.2%}")
 
-    print(f"  Train: {len(y_train)}  |  Test: {len(y_test)}")
-
-    print("Training models (XGBoost + Logistic Regression)...")
+    print("\nTraining final models (XGBoost + Logistic Regression + Random Forest)...")
     results = train_models(X_train, y_train, X_test, y_test, random_state=random_state)
 
-    print("\n--- XGBoost ---")
-    for metric, value in results["xgb_metrics"].items():
-        print(f"  {metric}: {value:.4f}")
-
-    print("\n--- Logistic Regression ---")
-    for metric, value in results["lr_metrics"].items():
-        print(f"  {metric}: {value:.4f}")
+    for name, label in [("xgb", "XGBoost"), ("lr", "Logistic Regression"), ("rf", "Random Forest")]:
+        print(f"\n  --- {label} ---")
+        for metric, value in results[f"{name}_metrics"].items():
+            print(f"    {metric}: {value:.4f}")
 
     print("\nSaving artifacts...")
-    save_artifacts(results["xgb"], results["lr"], scaler)
-    print("  Saved to artifacts/\n")
+    save_artifacts(results["xgb"], results["lr"], results["rf"], preprocessor)
+    print("  Saved to artifacts/")
 
-    test_sample = pd.DataFrame(
+    print("\n--- Sample predictions ---")
+    test_sample = pd.DataFrame([
         {
-            "age": [62, 45],
-            "systolic_bp": [148.0, 118.0],
-            "diastolic_bp": [92.0, 76.0],
-            "heart_rate_variability": [22.0, 48.0],
-            "BMI": [31.2, 24.1],
-            "cholesterol": [245.0, 178.0],
-            "atrial_fibrillation": [1, 0],
-            "sleep_hours": [5.5, 7.8],
-            "activity_level": [2.0, 7.5],
-            "diabetes": [1, 0],
-            "smoking": [1, 0],
-            "family_history": [1, 0],
-        }
-    )
+            "gender": "Male",
+            "age": 67,
+            "hypertension": 0,
+            "heart_disease": 1,
+            "ever_married": "Yes",
+            "work_type": "Private",
+            "Residence_type": "Urban",
+            "avg_glucose_level": 228.69,
+            "bmi": 36.6,
+            "smoking_status": "formerly smoked",
+        },
+        {
+            "gender": "Female",
+            "age": 35,
+            "hypertension": 0,
+            "heart_disease": 0,
+            "ever_married": "No",
+            "work_type": "Private",
+            "Residence_type": "Urban",
+            "avg_glucose_level": 85.0,
+            "bmi": 24.0,
+            "smoking_status": "never smoked",
+        },
+    ])
 
-    print("Sample predictions from predict_risk:")
     from predict import predict_risk
 
     for idx, row in test_sample.iterrows():
@@ -61,4 +82,5 @@ def main(data_path: str | None = None, random_state: int = 42) -> None:
 
 
 if __name__ == "__main__":
-    main()
+    data_path = sys.argv[1] if len(sys.argv) > 1 else "healthcare-dataset-stroke-data.csv"
+    main(data_path)

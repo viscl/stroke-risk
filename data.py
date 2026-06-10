@@ -1,127 +1,96 @@
 import numpy as np
 import pandas as pd
+from sklearn.compose import ColumnTransformer
+from sklearn.impute import SimpleImputer
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
 from imblearn.over_sampling import SMOTE
 
 FEATURE_COLUMNS = [
+    "gender",
     "age",
-    "systolic_bp",
-    "diastolic_bp",
-    "heart_rate_variability",
-    "BMI",
-    "cholesterol",
-    "atrial_fibrillation",
-    "sleep_hours",
-    "activity_level",
-    "diabetes",
-    "smoking",
-    "family_history",
+    "hypertension",
+    "heart_disease",
+    "ever_married",
+    "work_type",
+    "Residence_type",
+    "avg_glucose_level",
+    "bmi",
+    "smoking_status",
 ]
 
-LABEL_COLUMN = "stroke_risk"
+LABEL_COLUMN = "stroke"
 
+NUMERIC_COLUMNS = ["age", "hypertension", "heart_disease", "avg_glucose_level", "bmi"]
+CATEGORICAL_COLUMNS = ["gender", "ever_married", "work_type", "Residence_type", "smoking_status"]
 
-def generate_synthetic_data(n_samples: int = 5000, random_state: int = 42) -> pd.DataFrame:
-    rng = np.random.default_rng(random_state)
+def load_data(path: str) -> pd.DataFrame:
+    df = pd.read_csv(path)
 
-    age = rng.integers(35, 90, n_samples)
-    atrial_fibrillation = rng.binomial(1, 0.15, n_samples)
-    diabetes = rng.binomial(1, 0.20, n_samples)
-    smoking = rng.binomial(1, 0.25, n_samples)
-    family_history = rng.binomial(1, 0.18, n_samples)
+    df = df.drop(columns=["id"], errors="ignore")
 
-    systolic_bp = 110 + 0.6 * age + rng.normal(0, 12, n_samples) + atrial_fibrillation * 8 + diabetes * 6
-    diastolic_bp = 70 + 0.15 * age + rng.normal(0, 8, n_samples) + atrial_fibrillation * 3
-    systolic_bp = np.clip(systolic_bp, 90, 220)
-    diastolic_bp = np.clip(diastolic_bp, 50, 140)
+    df["bmi"] = pd.to_numeric(df["bmi"], errors="coerce")
+    bmi_median = df["bmi"].median()
+    df["bmi"] = df["bmi"].fillna(bmi_median)
 
-    heart_rate_variability = 50 - 0.3 * age + rng.normal(0, 10, n_samples) - diabetes * 5 - smoking * 4
-    heart_rate_variability = np.clip(heart_rate_variability, 10, 120)
+    _validate_columns(df)
 
-    BMI = 22 + 0.12 * age + rng.normal(0, 4, n_samples) + diabetes * 2.5
-    BMI = np.clip(BMI, 16, 50)
-
-    cholesterol = 160 + 0.5 * age + rng.normal(0, 30, n_samples) + smoking * 10 + diabetes * 8
-    cholesterol = np.clip(cholesterol, 100, 350)
-
-    sleep_hours = 7.5 - 0.02 * age + rng.normal(0, 1.2, n_samples)
-    sleep_hours = np.clip(sleep_hours, 3, 12)
-
-    activity_level = rng.integers(1, 11, n_samples).astype(float)
-    activity_level = np.clip(activity_level - 0.03 * age + rng.normal(0, 1.8, n_samples), 1, 10)
-
-    logit = (
-        -8.0
-        + 0.06 * age
-        + 0.02 * systolic_bp
-        + 0.01 * diastolic_bp
-        - 0.03 * heart_rate_variability
-        + 0.04 * BMI
-        + 0.005 * cholesterol
-        + 1.2 * atrial_fibrillation
-        - 0.15 * sleep_hours
-        - 0.12 * activity_level
-        + 0.9 * diabetes
-        + 0.7 * smoking
-        + 0.8 * family_history
-    )
-    prob = 1 / (1 + np.exp(-logit))
-    stroke_risk = rng.binomial(1, prob)
-
-    df = pd.DataFrame(
-        {
-            "age": age,
-            "systolic_bp": systolic_bp.round(1),
-            "diastolic_bp": diastolic_bp.round(1),
-            "heart_rate_variability": heart_rate_variability.round(2),
-            "BMI": BMI.round(1),
-            "cholesterol": cholesterol.round(1),
-            "atrial_fibrillation": atrial_fibrillation,
-            "sleep_hours": sleep_hours.round(1),
-            "activity_level": activity_level.round(1),
-            "diabetes": diabetes,
-            "smoking": smoking,
-            "family_history": family_history,
-            "stroke_risk": stroke_risk,
-        }
-    )
     return df
 
 
-def load_data(path: str | None = None) -> tuple[np.ndarray, np.ndarray]:
-    if path is not None:
-        df = pd.read_csv(path)
-        _validate_columns(df)
-    else:
-        df = generate_synthetic_data()
-
-    X = df[FEATURE_COLUMNS].values
+def encode_data(df: pd.DataFrame):
+    X_raw = df[FEATURE_COLUMNS]
     y = df[LABEL_COLUMN].values
 
-    return X, y
+    numeric_transformer = Pipeline([
+        ("imputer", SimpleImputer(strategy="median")),
+        ("scaler", StandardScaler()),
+    ])
+
+    categorical_transformer = Pipeline([
+        ("imputer", SimpleImputer(strategy="constant", fill_value="Unknown")),
+        ("onehot", OneHotEncoder(handle_unknown="ignore", sparse_output=False)),
+    ])
+
+    preprocessor = ColumnTransformer([
+        ("num", numeric_transformer, NUMERIC_COLUMNS),
+        ("cat", categorical_transformer, CATEGORICAL_COLUMNS),
+    ])
+
+    X = preprocessor.fit_transform(X_raw)
+    feature_names = get_feature_names(preprocessor)
+
+    return X, y, preprocessor, feature_names
 
 
-def preprocess_data(
+def split_and_balance(
     X: np.ndarray,
     y: np.ndarray,
     test_size: float = 0.2,
     random_state: int = 42,
     apply_smote: bool = True,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, StandardScaler]:
+):
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=test_size, random_state=random_state, stratify=y
     )
-
-    scaler = StandardScaler()
-    X_train = scaler.fit_transform(X_train)
-    X_test = scaler.transform(X_test)
 
     if apply_smote:
         smote = SMOTE(random_state=random_state)
         X_train, y_train = smote.fit_resample(X_train, y_train)
 
-    return X_train, X_test, y_train, y_test, scaler
+    return X_train, X_test, y_train, y_test
+
+
+def get_feature_names(preprocessor) -> list[str]:
+    names = []
+    for name, _, cols in preprocessor.transformers_:
+        if name == "num":
+            names.extend(cols)
+        elif name == "cat":
+            ohe = preprocessor.named_transformers_["cat"].named_steps["onehot"]
+            names.extend(ohe.get_feature_names_out(cols).tolist())
+    return names
 
 
 def _validate_columns(df: pd.DataFrame) -> None:
