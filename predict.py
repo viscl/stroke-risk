@@ -9,9 +9,6 @@ from data import get_feature_names
 
 DEFAULT_ARTIFACTS_DIR = os.path.join(os.path.dirname(__file__), "artifacts")
 
-_LOW_THRESHOLD = 0.3
-_HIGH_THRESHOLD = 0.6
-
 
 def _load_artifacts():
     from model import load_artifacts
@@ -20,22 +17,26 @@ def _load_artifacts():
 
 
 _xgb, _lr, _rf, _preprocessor = None, None, None, None
+_threshold = None
 _explainer = None
 _feature_names = None
 
 
 def _ensure_loaded():
-    global _xgb, _lr, _rf, _preprocessor, _explainer, _feature_names
+    global _xgb, _lr, _rf, _preprocessor, _threshold, _explainer, _feature_names
     if _xgb is None:
-        _xgb, _lr, _rf, _preprocessor = _load_artifacts()
-        _explainer = shap.TreeExplainer(_xgb)
+        _xgb, _lr, _rf, _preprocessor, _threshold = _load_artifacts()
+        raw_xgb = _xgb.calibrated_classifiers_[0].estimator
+        _explainer = shap.TreeExplainer(raw_xgb)
         _feature_names = get_feature_names(_preprocessor)
 
 
 def _risk_level(prob: float) -> str:
-    if prob < _LOW_THRESHOLD:
+    low = _threshold.get("low", 0.3)
+    high = _threshold.get("high", 0.6)
+    if prob < low:
         return "Low"
-    if prob < _HIGH_THRESHOLD:
+    if prob < high:
         return "Moderate"
     return "High"
 
@@ -54,6 +55,8 @@ def predict_risk(
     xgb_probs = _xgb.predict_proba(X_encoded)[:, 1]
     lr_probs = _lr.predict_proba(X_encoded)[:, 1]
     rf_probs = _rf.predict_proba(X_encoded)[:, 1]
+
+    decision = _threshold.get("decision", 0.5)
 
     results = []
     for i, p in enumerate(patients):
@@ -75,7 +78,7 @@ def predict_risk(
             {
                 "risk_probability": round(xgb_prob, 4),
                 "risk_level": _risk_level(xgb_prob),
-                "risk_label": int(xgb_prob >= 0.5),
+                "risk_label": int(xgb_prob >= decision),
                 "lr_probability": round(float(lr_probs[i]), 4),
                 "rf_probability": round(float(rf_probs[i]), 4),
                 "shap_explanation": feature_contributions,

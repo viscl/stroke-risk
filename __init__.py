@@ -1,10 +1,20 @@
 from .data import FEATURE_COLUMNS, LABEL_COLUMN, encode_data, get_feature_names, load_data, split_and_balance
-from .model import cross_validate_models, load_artifacts, save_artifacts, train_models
+from .model import (
+    calibrate_models,
+    cross_validate_models,
+    load_artifacts,
+    save_artifacts,
+    train_models,
+    tune_rf,
+    tune_threshold,
+    tune_xgb,
+)
 from .predict import predict_risk
 
 __all__ = [
     "FEATURE_COLUMNS",
     "LABEL_COLUMN",
+    "calibrate_models",
     "encode_data",
     "get_feature_names",
     "load_data",
@@ -13,5 +23,8 @@ __all__ = [
     "load_artifacts",
     "save_artifacts",
     "train_models",
+    "tune_rf",
+    "tune_threshold",
+    "tune_xgb",
     "predict_risk",
 ]
