@@ -1,4 +1,4 @@
-from .data import FEATURE_COLUMNS, LABEL_COLUMN, encode_data, get_feature_names, load_data, split_and_balance
+from .data import FEATURE_COLUMNS, LABEL_COLUMN, encode_data, engineer_features, get_feature_names, load_data, split_and_balance
 from .model import (
     calibrate_models,
     cross_validate_models,
@@ -19,6 +19,7 @@ __all__ = [
     "NeuralNetClassifier",
     "calibrate_models",
     "encode_data",
+    "engineer_features",
     "get_feature_names",
     "load_data",
     "split_and_balance",

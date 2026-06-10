@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import shap
 
-from data import get_feature_names
+from data import engineer_features, get_feature_names
 from neural_net import NeuralNetClassifier
 
 DEFAULT_ARTIFACTS_DIR = os.path.join(os.path.dirname(__file__), "artifacts")
@@ -62,6 +62,7 @@ def predict_risk(
     patients = [patient] if single_input else patient
 
     X_raw = pd.DataFrame(patients)
+    X_raw = engineer_features(X_raw)
     X_encoded = _preprocessor.transform(X_raw)
 
     xgb_probs = _xgb.predict_proba(X_encoded)[:, 1]

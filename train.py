@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 from sklearn.metrics import classification_report, confusion_matrix
 
-from data import FEATURE_COLUMNS, encode_data, load_data, split_and_balance
+from data import FEATURE_COLUMNS, encode_data, engineer_features, load_data, split_and_balance
 from model import (
     calibrate_models,
     cross_validate_models,
@@ -21,6 +21,7 @@ from neural_net import NeuralNetClassifier
 def main(data_path: str = "healthcare-dataset-stroke-data.csv", random_state: int = 42, tune: bool = True) -> None:
     print("Loading data...")
     df = load_data(data_path)
+    df = engineer_features(df)
     print(f"  Samples: {len(df)}  |  Stroke prevalence: {df['stroke'].mean():.2%}")
 
     print("\nEncoding features...")

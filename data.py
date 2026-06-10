@@ -39,6 +39,50 @@ def load_data(path: str) -> pd.DataFrame:
     return df
 
 
+def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
+    new_numeric = [
+        "glucose_hypertension",
+        "glucose_bmi_ratio",
+        "age_hypertension",
+        "age_glucose",
+        "vascular_risk_score",
+    ]
+    new_categorical = ["age_group", "bmi_category"]
+
+    for col in new_numeric:
+        if col not in NUMERIC_COLUMNS:
+            NUMERIC_COLUMNS.append(col)
+            FEATURE_COLUMNS.append(col)
+
+    for col in new_categorical:
+        if col not in CATEGORICAL_COLUMNS:
+            CATEGORICAL_COLUMNS.append(col)
+            FEATURE_COLUMNS.append(col)
+
+    df["glucose_hypertension"] = df["avg_glucose_level"] * df["hypertension"]
+    df["glucose_bmi_ratio"] = df["avg_glucose_level"] / df["bmi"].clip(lower=1e-6)
+    df["age_hypertension"] = df["age"] * df["hypertension"]
+    df["age_glucose"] = df["age"] * df["avg_glucose_level"]
+    df["vascular_risk_score"] = (
+        df["hypertension"]
+        + df["heart_disease"]
+        + (df["smoking_status"] == "smokes").astype(int)
+    )
+
+    df["age_group"] = pd.cut(
+        df["age"],
+        bins=[0, 40, 60, float("inf")],
+        labels=["young", "middle", "senior"],
+    )
+    df["bmi_category"] = pd.cut(
+        df["bmi"],
+        bins=[0, 18.5, 25, 30, float("inf")],
+        labels=["underweight", "normal", "overweight", "obese"],
+    )
+
+    return df
+
+
 def encode_data(df: pd.DataFrame):
     X_raw = df[FEATURE_COLUMNS]
     y = df[LABEL_COLUMN].values

@@ -23,7 +23,7 @@ python -c "from predict import predict_risk; ..."
 ## Pipeline flow
 
 ```
-load_data → encode_data → cross_validate_models (baseline CV)
+load_data → engineer_features → encode_data → cross_validate_models (baseline CV)
   → tune_xgb + tune_rf (Optuna, 50 trials each, F1-optimized via SMOTE-per-fold CV)
   → split_and_balance (SMOTE train split)
   → train_models (with tuned params)
@@ -40,6 +40,7 @@ load_data → encode_data → cross_validate_models (baseline CV)
 - `artifacts/scaler.joblib` is stale — not saved or loaded by current code. Ignore it.
 - `Residence_type` is the canonical column name (capital `R`, lowercase `_type`). All other column names are lowercase_with_underscores.
 - `load_data` imputes missing BMI with the median *before* encoding. The preprocessing pipeline also has a median imputer, so non-BMI numeric NaNs are still handled.
+- `engineer_features(df)` must be called after `load_data` and before `encode_data`. It adds 5 numeric + 2 categorical interaction/binned features and updates `FEATURE_COLUMNS`, `NUMERIC_COLUMNS`, `CATEGORICAL_COLUMNS` (idempotent). `predict_risk` also calls it before transforming.
 - `artifacts/threshold.json` stores the tuned decision threshold (`{"decision": X, "low": 0.3, "high": 0.6}`). Predict falls back to `decision=0.5` if the file is missing.
 
 ## SMOTE convention
