@@ -330,6 +330,110 @@ def tune_threshold(
 
 
 # ---------------------------------------------------------------------------
+# Validation diagnostics
+# ---------------------------------------------------------------------------
+
+def bootstrap_auc_ci(
+    y_true: np.ndarray,
+    y_prob: np.ndarray,
+    n_bootstrap: int = 1000,
+    ci: float = 95,
+    random_state: int = 42,
+) -> dict:
+    rng = np.random.RandomState(random_state)
+    n = len(y_true)
+    scores = np.empty(n_bootstrap)
+    for i in range(n_bootstrap):
+        idx = rng.randint(0, n, n)
+        scores[i] = roc_auc_score(y_true[idx], y_prob[idx])
+    alpha = (100 - ci) / 2
+    lower = float(np.percentile(scores, alpha))
+    upper = float(np.percentile(scores, 100 - alpha))
+    return {"mean": float(scores.mean()), "lower": lower, "upper": upper}
+
+
+def plot_calibration_curves(
+    model_probs: dict[str, np.ndarray],
+    y_true: np.ndarray,
+    save_path: str,
+    n_bins: int = 10,
+) -> None:
+    import matplotlib.pyplot as plt
+    from sklearn.calibration import calibration_curve
+
+    fig, ax = plt.subplots(figsize=(7, 7))
+    ax.plot([0, 1], [0, 1], "k--", label="Perfectly calibrated")
+    colors = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd"]
+
+    for idx, (name, probs) in enumerate(model_probs.items()):
+        fraction_positive, mean_predicted = calibration_curve(
+            y_true, probs, n_bins=n_bins, strategy="uniform"
+        )
+        ax.plot(mean_predicted, fraction_positive, "s-",
+                color=colors[idx % len(colors)], label=name)
+
+    ax.set_xlabel("Mean predicted probability")
+    ax.set_ylabel("Fraction of positives")
+    ax.set_title("Reliability Diagram (Calibration Curves)")
+    ax.legend(loc="lower right")
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+    fig.tight_layout()
+    fig.savefig(save_path, dpi=150)
+    plt.close(fig)
+
+
+def subgroup_analysis(
+    df_test: "pd.DataFrame",
+    y_test: np.ndarray,
+    model_probs: dict[str, np.ndarray],
+    threshold: float = 0.5,
+    subgroup_cols: list[str] | None = None,
+) -> dict:
+    import pandas as pd
+
+    if subgroup_cols is None:
+        subgroup_cols = ["gender", "age_group", "ever_married"]
+
+    overall = {}
+    for name, probs in model_probs.items():
+        overall[name] = {
+            "auc": float(roc_auc_score(y_test, probs)),
+            "recall": float(recall_score(y_test, (probs >= threshold).astype(int))),
+        }
+
+    results = {}
+
+    for col in subgroup_cols:
+        if col not in df_test.columns:
+            continue
+        col_results = {}
+        for val in sorted(df_test[col].unique()):
+            mask = (df_test[col] == val).values
+            if mask.sum() < 20 or y_test[mask].sum() < 1:
+                continue
+            val_results = {}
+            for name, probs in model_probs.items():
+                y_sub = y_test[mask]
+                p_sub = probs[mask]
+                rec = float(recall_score(y_sub, (p_sub >= threshold).astype(int)))
+                auc_val = float(roc_auc_score(y_sub, p_sub))
+                rec_drop = overall[name]["recall"] - rec
+                val_results[name] = {
+                    "n": int(mask.sum()),
+                    "positives": int(y_sub.sum()),
+                    "auc": auc_val,
+                    "recall": rec,
+                    "recall_drop": rec_drop,
+                    "flagged": rec_drop > 0.1,
+                }
+            col_results[str(val)] = val_results
+        results[col] = col_results
+
+    return {"overall": overall, "subgroups": results}
+
+
+# ---------------------------------------------------------------------------
 # Artifact persistence
 # ---------------------------------------------------------------------------
 

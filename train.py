@@ -1,14 +1,26 @@
+import os
 import sys
 
 import numpy as np
 import pandas as pd
 from sklearn.metrics import classification_report, confusion_matrix
+from sklearn.model_selection import train_test_split
 
-from data import FEATURE_COLUMNS, encode_data, engineer_features, load_data, split_and_balance
+from data import (
+    FEATURE_COLUMNS,
+    LABEL_COLUMN,
+    encode_data,
+    engineer_features,
+    load_data,
+    split_and_balance,
+)
 from model import (
+    bootstrap_auc_ci,
     calibrate_models,
     cross_validate_models,
+    plot_calibration_curves,
     save_artifacts,
+    subgroup_analysis,
     train_models,
     train_stacking_model,
     tune_rf,
@@ -23,6 +35,11 @@ def main(data_path: str = "healthcare-dataset-stroke-data.csv", random_state: in
     df = load_data(data_path)
     df = engineer_features(df)
     print(f"  Samples: {len(df)}  |  Stroke prevalence: {df['stroke'].mean():.2%}")
+
+    _, df_test_raw = train_test_split(
+        df, test_size=0.2, random_state=random_state, stratify=df[LABEL_COLUMN]
+    )
+    df_test_raw = df_test_raw.reset_index(drop=True)
 
     print("\nEncoding features...")
     X, y, preprocessor, feature_names = encode_data(df)
@@ -85,6 +102,7 @@ def main(data_path: str = "healthcare-dataset-stroke-data.csv", random_state: in
     threshold_dict = {"decision": best_threshold, "low": 0.3, "high": 0.6}
 
     print("\n--- Classification reports (using tuned threshold) ---")
+    model_probs = {}
     for name, model, label in [
         ("xgb", calib_xgb, "XGBoost (calibrated)"),
         ("lr", results["lr"], "Logistic Regression"),
@@ -92,12 +110,48 @@ def main(data_path: str = "healthcare-dataset-stroke-data.csv", random_state: in
         ("nn", nn_model, "Neural Network"),
     ]:
         y_prob = model.predict_proba(X_test)[:, 1]
+        model_probs[label] = y_prob
         y_pred = (y_prob >= best_threshold).astype(int)
 
         print(f"\n  === {label} ===")
         print(f"  {classification_report(y_test, y_pred)}")
         cm = confusion_matrix(y_test, y_pred)
         print(f"  Confusion matrix:\n    TN={cm[0,0]:5d}  FP={cm[0,1]:5d}\n    FN={cm[1,0]:5d}  TP={cm[1,1]:5d}")
+
+    print("\n--- Bootstrap AUC (95% CI, 1000 samples) ---")
+    for label, probs in model_probs.items():
+        ci = bootstrap_auc_ci(y_test, probs)
+        print(f"  {label}: AUC = {ci['mean']:.4f}  (95% CI: {ci['lower']:.4f} — {ci['upper']:.4f})")
+
+    print("\n--- Calibration curves ---")
+    calib_path = os.path.join("artifacts", "calibration_curves.png")
+    plot_calibration_curves(model_probs, y_test, calib_path)
+    print(f"  Saved to {calib_path}")
+
+    print("\n--- Subgroup analysis ---")
+    sub_results = subgroup_analysis(df_test_raw, y_test, model_probs, threshold=best_threshold)
+
+    print("  Overall metrics:")
+    for label, metrics in sub_results["overall"].items():
+        print(f"    {label}: AUC={metrics['auc']:.4f}  Recall={metrics['recall']:.4f}")
+
+    for col, groups in sub_results["subgroups"].items():
+        print(f"\n  By {col}:")
+        flags = []
+        for val, metrics_by_model in groups.items():
+            for model_name, m in metrics_by_model.items():
+                if m["flagged"]:
+                    flags.append(f"    ⚠ {model_name} on {col}={val}: "
+                                 f"recall={m['recall']:.4f} (drop={m['recall_drop']:+.4f})")
+        for val, metrics_by_model in groups.items():
+            parts = [f"    {col}={val}"]
+            for model_name, m in metrics_by_model.items():
+                parts.append(f"{model_name} AUC={m['auc']:.4f} Rec={m['recall']:.4f}")
+            print("  | ".join(parts))
+        if flags:
+            print("\n  Recall drops flagged:")
+            for f in flags:
+                print(f)
 
     print("\n--- Stacking ensemble ---")
     stacking_model = train_stacking_model(

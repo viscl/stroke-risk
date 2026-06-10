@@ -42,6 +42,7 @@ load_data → engineer_features → encode_data → cross_validate_models (basel
 - `load_data` imputes missing BMI with the median *before* encoding. The preprocessing pipeline also has a median imputer, so non-BMI numeric NaNs are still handled.
 - `engineer_features(df)` must be called after `load_data` and before `encode_data`. It adds 5 numeric + 2 categorical interaction/binned features and updates `FEATURE_COLUMNS`, `NUMERIC_COLUMNS`, `CATEGORICAL_COLUMNS` (idempotent). `predict_risk` also calls it before transforming.
 - `artifacts/threshold.json` stores the tuned decision threshold (`{"decision": X, "low": 0.3, "high": 0.6}`). Predict falls back to `decision=0.5` if the file is missing.
+- `nn_model.pt` is a `torch.save` dict checkpoint (not TorchScript). `NeuralNetClassifier.load()` requires `weights_only=False` — don't change that or it will break loading.
 
 ## SMOTE convention
 
