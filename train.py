@@ -138,13 +138,22 @@ def main(data_path: str = "healthcare-dataset-stroke-data.csv", random_state: in
     for col, groups in sub_results["subgroups"].items():
         print(f"\n  By {col}:")
         flags = []
+        small_samples = []
         for val, metrics_by_model in groups.items():
+            first_model = next(iter(metrics_by_model.values()))
+            n_total = first_model["n"]
+            n_pos = first_model["positives"]
+            if n_pos <= 3:
+                small_samples.append((col, val, n_total, n_pos))
             for model_name, m in metrics_by_model.items():
                 if m["flagged"]:
                     flags.append(f"    ⚠ {model_name} on {col}={val}: "
                                  f"recall={m['recall']:.4f} (drop={m['recall_drop']:+.4f})")
         for val, metrics_by_model in groups.items():
-            parts = [f"    {col}={val}"]
+            first_model = next(iter(metrics_by_model.values()))
+            n_total = first_model["n"]
+            n_pos = first_model["positives"]
+            parts = [f"    {col}={val}  (n={n_total}, pos={n_pos})"]
             for model_name, m in metrics_by_model.items():
                 parts.append(f"{model_name} AUC={m['auc']:.4f} Rec={m['recall']:.4f}")
             print("  | ".join(parts))
@@ -152,6 +161,10 @@ def main(data_path: str = "healthcare-dataset-stroke-data.csv", random_state: in
             print("\n  Recall drops flagged:")
             for f in flags:
                 print(f)
+        if small_samples:
+            print("\n  ⚠ Small-sample subgroups (recall statistically unstable):")
+            for col_name, val_name, n_tot, n_p in small_samples:
+                print(f"    {col_name}={val_name}: n={n_tot}, positives={n_p}")
 
     print("\n--- Stacking ensemble ---")
     stacking_model = train_stacking_model(

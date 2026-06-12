@@ -11,6 +11,8 @@ from neural_net import NeuralNetClassifier
 
 DEFAULT_ARTIFACTS_DIR = os.path.join(os.path.dirname(__file__), "artifacts")
 
+CLINICAL_FEATURE_BLACKLIST = {"Residence_type"}
+
 
 def _load_artifacts():
     from model import load_artifacts
@@ -103,6 +105,8 @@ def predict_risk(
 
         feature_contributions = []
         for j, name in enumerate(_feature_names):
+            if any(name == bl or name.startswith(bl + "_") for bl in CLINICAL_FEATURE_BLACKLIST):
+                continue
             feature_contributions.append(
                 {
                     "feature": name,

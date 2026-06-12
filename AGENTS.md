@@ -5,6 +5,9 @@ Flat single-package ML project: data → train → predict. No tests, no CI, no 
 ## Commands
 
 ```bash
+# All commands run from the stroke-risk/ directory
+cd stroke-risk
+
 # Train with Optuna tuning (default; ~5 min)
 python train.py                          # uses healthcare-dataset-stroke-data.csv
 python train.py /path/to/your_data.csv   # custom data: must have all FEATURE_COLUMNS + stroke label
@@ -37,12 +40,14 @@ load_data → engineer_features → encode_data → cross_validate_models (basel
 
 ## Gotchas
 
-- `artifacts/scaler.joblib` is stale — not saved or loaded by current code. Ignore it.
+- `artifacts/scaler.joblib` is never saved or loaded by current code (no `StandardScaler` artifact — scaling is inside `preprocessor.joblib`).
+- `train_test_split` is called twice independently with `test_size=0.2`: once on raw `df` (for `df_test_raw`, used only by `subgroup_analysis`) and once inside `split_and_balance` on encoded `X, y` (for model evaluation). These produce **different** test sets — don't treat them as interchangeable.
 - `Residence_type` is the canonical column name (capital `R`, lowercase `_type`). All other column names are lowercase_with_underscores.
 - `load_data` imputes missing BMI with the median *before* encoding. The preprocessing pipeline also has a median imputer, so non-BMI numeric NaNs are still handled.
 - `engineer_features(df)` must be called after `load_data` and before `encode_data`. It adds 5 numeric + 2 categorical interaction/binned features and updates `FEATURE_COLUMNS`, `NUMERIC_COLUMNS`, `CATEGORICAL_COLUMNS` (idempotent). `predict_risk` also calls it before transforming.
 - `artifacts/threshold.json` stores the tuned decision threshold (`{"decision": X, "low": 0.3, "high": 0.6}`). Predict falls back to `decision=0.5` if the file is missing.
 - `nn_model.pt` is a `torch.save` dict checkpoint (not TorchScript). `NeuralNetClassifier.load()` requires `weights_only=False` — don't change that or it will break loading.
+- The directory is `stroke-risk/` (hyphen). `train.py` and `predict.py` use absolute imports (`from data import ...`) designed to work when run from inside this directory. The `__init__.py` uses relative imports for package usage, but `import stroke-risk` is not a valid Python import.
 
 ## SMOTE convention
 
@@ -51,6 +56,7 @@ load_data → engineer_features → encode_data → cross_validate_models (basel
 
 ## Predict module
 
+- `torch >= 2.0` is required even for prediction-only usage — `predict.py` imports `NeuralNetClassifier` which depends on `torch`.
 - Lazy-loads models and threshold into module globals on first `predict_risk()` call — no explicit init step.
 - Accepts a single `dict` or `list[dict]`; returns the same shape.
 - Models saved to artifacts are calibrated `CalibratedClassifierCV` wrappers (XGB, RF). SHAP explainer extracts the raw XGBoost from the wrapper via `_xgb.calibrated_classifiers_[0].estimator`.

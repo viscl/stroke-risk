@@ -85,6 +85,29 @@ Supply a CSV with the required columns and a `stroke` label:
 python train.py /path/to/your_data.csv
 ```
 
+## Known Limitations
+
+### Data Source
+Trained on the Kaggle Stroke Prediction Dataset (5,110 patients, 4.87%
+stroke prevalence, anonymous/unverified source). A future version will
+incorporate CDC BRFSS data (457,670 respondents) for more robust training.
+
+### Subgroup Fairness: Young Patients
+Subgroup analysis revealed a significant blind spot: among 464 patients
+under 40 in the test set, 5 had a stroke - and 0 of these 5 were flagged
+as high-risk by any of the 4 base models (XGBoost, Logistic Regression,
+Random Forest, Neural Network), despite a 5x training weight applied to
+young-stroke cases.
+
+Possible explanations: young-onset stroke may be driven by risk factors
+not present in this dataset (illicit drug use, genetic clotting disorders,
+autoimmune conditions) rather than the traditional cardiovascular risk
+factors (hypertension, glucose, BMI) that dominate here. With only 5
+cases this has wide statistical uncertainty, but a 0/5 result across 4
+independently-trained models suggests a real pattern.
+
+This model should NOT be relied upon for screening young patients.
+
 ## License
 
 MIT
