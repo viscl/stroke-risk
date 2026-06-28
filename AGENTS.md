@@ -5,23 +5,35 @@ Flat single-package ML project: data → train → predict. No tests, no CI, no 
 ## Commands
 
 ```bash
+# One-time setup
+pip install -r requirements.txt          # torch is ~2.5 GB — plan accordingly
+
 # All commands run from the stroke-risk/ directory
 cd stroke-risk
 
-# Train with Optuna tuning (default; ~5 min)
+# Train with Optuna tuning (default; ~5 min on 8-core CPU)
 python train.py                          # uses healthcare-dataset-stroke-data.csv
 python train.py /path/to/your_data.csv   # custom data: must have all FEATURE_COLUMNS + stroke label
 
-# Train without tuning (skips Optuna, uses default hyperparams)
+# Train without tuning (skips Optuna, uses default hyperparams; ~30 s)
 python train.py --no-tune
 
 # Predict (requires artifacts/ from training)
-python -c "from predict import predict_risk; ..."
+python -c "
+from predict import predict_risk
+patient = {
+    'gender': 'Male', 'age': 67, 'hypertension': 0, 'heart_disease': 1,
+    'ever_married': 'Yes', 'work_type': 'Private', 'Residence_type': 'Urban',
+    'avg_glucose_level': 228.69, 'bmi': 36.6, 'smoking_status': 'formerly smoked',
+}
+result = predict_risk(patient)
+print(f\"Risk: {result['risk_probability']:.2%} ({result['risk_level']})\")
+"
 ```
 
 ## Required order
 
-`train.py` must complete before `predict_risk` works — it writes `artifacts/{xgb,lr,rf}_model.joblib`, `preprocessor.joblib`, and `threshold.json`. The `artifacts/` directory is gitignored but pre-populated in this repo with trained models.
+`train.py` must complete before `predict_risk` works — it writes `artifacts/{xgb,lr,rf}_model.joblib`, `preprocessor.joblib`, and `threshold.json`. The `artifacts/` directory is gitignored and not committed; you must run `train.py` to generate models.
 
 ## Pipeline flow
 
