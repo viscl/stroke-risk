@@ -1,6 +1,5 @@
 import json
 import os
-import sys
 
 import joblib
 import numpy as np
@@ -12,8 +11,6 @@ from sklearn.metrics import f1_score, precision_score, recall_score, roc_auc_sco
 from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from model import calibrate_models, cross_validate_models, train_models
 from neural_net import NeuralNetClassifier

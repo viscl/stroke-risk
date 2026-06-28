@@ -1,6 +1,6 @@
 # AGENTS.md — Stroke Risk
 
-Flat single-package ML project: data → train → predict. No tests, no CI, no linter/typecheck config.
+BRFSS-only pipeline. No tests, no CI, no linter/typecheck config.
 
 ## Commands
 
@@ -11,73 +11,65 @@ pip install -r requirements.txt          # torch is ~2.5 GB — plan accordingly
 # All commands run from the stroke-risk/ directory
 cd stroke-risk
 
-# Train with Optuna tuning (default; ~5 min on 8-core CPU)
-python train.py                          # uses healthcare-dataset-stroke-data.csv
-python train.py /path/to/your_data.csv   # custom data: must have all FEATURE_COLUMNS + stroke label
-
-# Train without tuning (skips Optuna, uses default hyperparams; ~30 s)
-python train.py --no-tune
-
-# Predict (requires artifacts/ from training)
-python -c "
-from predict import predict_risk
-patient = {
-    'gender': 'Male', 'age': 67, 'hypertension': 0, 'heart_disease': 1,
-    'ever_married': 'Yes', 'work_type': 'Private', 'Residence_type': 'Urban',
-    'avg_glucose_level': 228.69, 'bmi': 36.6, 'smoking_status': 'formerly smoked',
-}
-result = predict_risk(patient)
-print(f\"Risk: {result['risk_probability']:.2%} ({result['risk_level']})\")
-"
+# Train (~5 min on 8-core CPU)
+python src/train.py
 ```
+
+Prediction is not yet implemented — `src/predict.py` will be built in a
+future step.
 
 ## Required order
 
-`train.py` must complete before `predict_risk` works — it writes `artifacts/{xgb,lr,rf}_model.joblib`, `preprocessor.joblib`, and `threshold.json`. The `artifacts/` directory is gitignored and not committed; you must run `train.py` to generate models.
+`src/train.py` must complete before prediction works — it writes
+`models/{xgb,lr,rf}_model.joblib`, `preprocessor.joblib`,
+`nn_model.pt`, `feature_names.json`, and `metrics.json`.
+
+## Pipeline
+
+| Data | Features | Artifact dir |
+|---|---|---|
+| `data/brfss_cleaned.csv` (CDC BRFSS 2022, 457k) | bmi, smoking_status, exercise, alcohol, diabetes, heart_disease, sex, race, age_group | `models/` |
 
 ## Pipeline flow
 
 ```
-load_data → engineer_features → encode_data → cross_validate_models (baseline CV)
-  → tune_xgb + tune_rf (Optuna, 50 trials each, F1-optimized via SMOTE-per-fold CV)
-  → split_and_balance (SMOTE train split)
-  → train_models (with tuned params)
-  → calibrate_models (Platt scaling via CalibratedClassifierCV(cv=5) for XGB+RF)
+load_data → encode_data → cross_validate_models (5-fold CV, SMOTE per fold)
+  → SMOTE train split → train_models (XGB+LR+RF)
+  → calibrate_models (Platt scaling for XGB+RF)
   → train_nn (NeuralNetClassifier: MLP 128→64, ReLU+Dropout, Adam, early stopping)
-  → train_stacking_model (5-fold CV out-of-fold calibrated probs → LR meta-model, 4 base models)
-  → tune_threshold (F1-optimal on test set)
-  → classification_report + confusion_matrix
-  → save_artifacts (calibrated xgb, lr, calibrated rf, stacking, nn, preprocessor, threshold.json)
+  → metrics by age group → save models
+```
+
+## Source layout
+
+```
+stroke-risk/
+  src/
+    train.py          # Main entrypoint — orchestrates full training run
+    model.py          # _build_models, cross_validate_models, train_models, calibrate_models
+    neural_net.py     # StrokeMLP + NeuralNetClassifier (torch)
+    data/
+      brfss.py        # BRFSS XPT → CSV cleaning script
+  data/
+    brfss_cleaned.csv # Cleaned BRFSS dataset
+    raw/              # Source XPT (gitignored)
+  models/             # Trained artifacts (*.joblib gitignored; metrics.json, feature_names.json tracked)
+  requirements.txt
+  AGENTS.md
 ```
 
 ## Gotchas
 
-- `artifacts/scaler.joblib` is never saved or loaded by current code (no `StandardScaler` artifact — scaling is inside `preprocessor.joblib`).
-- `train_test_split` is called twice independently with `test_size=0.2`: once on raw `df` (for `df_test_raw`, used only by `subgroup_analysis`) and once inside `split_and_balance` on encoded `X, y` (for model evaluation). These produce **different** test sets — don't treat them as interchangeable.
-- `Residence_type` is the canonical column name (capital `R`, lowercase `_type`). All other column names are lowercase_with_underscores.
-- `load_data` imputes missing BMI with the median *before* encoding. The preprocessing pipeline also has a median imputer, so non-BMI numeric NaNs are still handled.
-- `engineer_features(df)` must be called after `load_data` and before `encode_data`. It adds 5 numeric + 2 categorical interaction/binned features and updates `FEATURE_COLUMNS`, `NUMERIC_COLUMNS`, `CATEGORICAL_COLUMNS` (idempotent). `predict_risk` also calls it before transforming.
-- `artifacts/threshold.json` stores the tuned decision threshold (`{"decision": X, "low": 0.3, "high": 0.6}`). Predict falls back to `decision=0.5` if the file is missing.
-- `nn_model.pt` is a `torch.save` dict checkpoint (not TorchScript). `NeuralNetClassifier.load()` requires `weights_only=False` — don't change that or it will break loading.
-- The directory is `stroke-risk/` (hyphen). `train.py` and `predict.py` use absolute imports (`from data import ...`) designed to work when run from inside this directory. The `__init__.py` uses relative imports for package usage, but `import stroke-risk` is not a valid Python import.
-
-## SMOTE convention
-
-- **CV (5-fold stratified):** `cross_validate_models` and `tune_xgb`/`tune_rf` use `imblearn.pipeline.Pipeline` to apply SMOTE *per fold*, avoiding data leakage.
-- **Final training:** `train.py` calls `split_and_balance(apply_smote=True)`, which SMOTEs the train split *once* before passing to `train_models`. `train_models` itself does not apply SMOTE internally.
-
-## Predict module
-
-- `torch >= 2.0` is required even for prediction-only usage — `predict.py` imports `NeuralNetClassifier` which depends on `torch`.
-- Lazy-loads models and threshold into module globals on first `predict_risk()` call — no explicit init step.
-- Accepts a single `dict` or `list[dict]`; returns the same shape.
-- Models saved to artifacts are calibrated `CalibratedClassifierCV` wrappers (XGB, RF). SHAP explainer extracts the raw XGBoost from the wrapper via `_xgb.calibrated_classifiers_[0].estimator`.
-- `risk_label` uses the tuned `decision` threshold from `threshold.json`, not hardcoded 0.5.
-
-## Stacking ensemble
-
-- `train_stacking_model` uses 5-fold CV to generate out-of-fold calibrated predictions from all 4 base models as features for a LogisticRegression meta-model (avoids data leakage).
-- Manual Platt scaling per fold (80/20 train/calibration split + sigmoid fitting) avoids the `CalibratedClassifierCV(cv='prefit')` incompatibility.
-- `predict_risk` output includes `stack_probability` field (`None` if `stacking_model.joblib` is missing).
-- Base models at prediction time are the externally-calibrated ones (XGB, RF via `CalibratedClassifierCV(cv=5)`, LR raw, NN raw).
-- The stacking meta-model's `n_features_in_` attribute is used at prediction time to decide 3 vs 4 input features for backward compatibility.
+- All commands run from `stroke-risk/`, not from `src/`. `src/train.py`
+  uses relative paths (`data/brfss_cleaned.csv`, `models/`) that break if
+  cwd is different.
+- `nn_model.pt` is a `torch.save` dict checkpoint (not TorchScript).
+  `NeuralNetClassifier.load()` requires `weights_only=False` — don't change
+  that or it will break loading.
+- `src/train.py` has no feature engineering step — BRFSS features are used
+  directly from the CSV. The old Kaggle pipeline's `engineer_features()`
+  and its interaction/binned features do not apply here.
+- `data/raw/LLCP2022.XPT` is gitignored. Only `data/brfss_cleaned.csv` is
+  tracked.
+- Prediction (`predict_risk`) is not yet built. Do not try to load
+  `models/` artifacts for inference until `src/predict.py` exists.
