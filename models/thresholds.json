@@ -1,0 +1,9 @@
+{
+  "young_optimized": {
+    "xgb": 0.28,
+    "lr": 0.39,
+    "rf": 0.41,
+    "nn": 0.39
+  },
+  "default": 0.5
+}
